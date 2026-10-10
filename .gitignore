@@ -1,0 +1,5 @@
+# Default runtime configuration can contain MQTT credentials and MCP tokens.
+/industrial-config.json
+/industrial-config.json.*.tmp
+/sensecraft_data_mcp/industrial-config.json
+/sensecraft_data_mcp/industrial-config.json.*.tmp

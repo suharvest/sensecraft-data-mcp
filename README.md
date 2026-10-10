@@ -140,3 +140,84 @@ TypeScript · [`@modelcontextprotocol/sdk`](https://github.com/modelcontextproto
 ## 其他子项目
 
 - `coding-assistant/`：早期实验性项目，目前仅有骨架代码，功能尚未实现。
+
+## 工业模式（Industrial mode，实验性）
+
+工业模式把网关发布的 MQTT 消息映射成 MCP 可查询的设备、字段和报警规则。Modbus RTU 等工业协议的转换由现场网关或 Multi-Gateway 完成；本项目只处理 MQTT 接入、JSON 字段映射和规则状态。
+
+The industrial mode maps gateway-published MQTT messages into MCP-queryable devices, fields, and alarm rules. Modbus RTU conversion remains the responsibility of the gateway or Multi-Gateway; this project handles MQTT ingestion, JSON field mapping, and rule state.
+
+### HTTP API
+
+工业 HTTP API 返回统一结构：成功为 `{ "ok": true, "data": ... }`，失败为 `{ "ok": false, "error": { "code", "message" } }`。
+
+The industrial HTTP API uses a common envelope: success is `{ "ok": true, "data": ... }`; failures are `{ "ok": false, "error": { "code", "message" } }`.
+
+### 启动工业模式 / Start industrial mode
+
+工业模式不需要 `ACCESS_ID`、`ACCESS_KEY` 或其他 PaaS 凭据。首次构建可使用国内 npm 镜像：
+
+```bash
+cd sensecraft_data_mcp
+npm ci --registry=https://registry.npmmirror.com
+npm run build
+DATA_SOURCE=industrial \
+INDUSTRIAL_HTTP_PORT=8080 \
+INDUSTRIAL_CONFIG_PATH="$PWD/industrial-config.json" \
+node dist/index.js
+```
+
+启动后打开 <http://127.0.0.1:8080/>。`INDUSTRIAL_HTTP_PORT` 未设置时默认使用 `8080`；`INDUSTRIAL_CONFIG_PATH` 未设置时使用当前工作目录的 `industrial-config.json`。保存配置后，MQTT 连接会按新配置重连，工业 MCP 工具读取同一份运行配置。原有 PaaS 模式不受影响，继续按上面的 PaaS 安装与 stdio 流程运行。
+
+Industrial mode does not require `ACCESS_ID`, `ACCESS_KEY`, or other PaaS credentials. Build and start it with:
+
+```bash
+cd sensecraft_data_mcp
+npm ci --registry=https://registry.npmmirror.com
+npm run build
+DATA_SOURCE=industrial \
+INDUSTRIAL_HTTP_PORT=8080 \
+INDUSTRIAL_CONFIG_PATH="$PWD/industrial-config.json" \
+node dist/index.js
+```
+
+Open <http://127.0.0.1:8080/> after startup. `INDUSTRIAL_HTTP_PORT` defaults to `8080`; `INDUSTRIAL_CONFIG_PATH` defaults to `industrial-config.json` in the working directory. Saving the UI configuration reconnects MQTT with the new configuration, and the industrial MCP tools read that running configuration. The existing PaaS mode keeps its original installation and stdio flow.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/industrial/config` | Read persisted MQTT/MCP/device configuration. MQTT passwords are masked. |
+| `PUT` | `/api/industrial/config` | Validate, persist, and reconnect with a full or partial configuration. |
+| `GET` | `/api/industrial/status` | Read broker state, device state, current values, and alarms. |
+| `GET` | `/api/industrial/messages` | Read the newest cached messages. |
+| `POST` | `/api/industrial/preview` | Test a topic/payload mapping without changing online state or alarm history. |
+| `POST` | `/api/industrial/demo` | Run an explicitly simulated message as an isolated trial; it is marked `simulated: true`, is not persisted as configuration, and never publishes to MQTT. |
+| `GET`/`POST` | `/api/industrial/notification/test` | Probe the device status only; it does not wake the device. The response includes state/capabilities and enabled state. |
+| `POST` | `/api/industrial/notification/send-test` | Explicit user-triggered test notification. `status: "accepted"` means accepted by the service, not confirmed playback. |
+
+工业配置默认持久化到当前工作目录的 `industrial-config.json`，可通过 `INDUSTRIAL_CONFIG_PATH` 指向其他位置。容器部署时应将该文件所在目录挂载为持久化卷；不要把 Broker 密码提交进仓库或镜像。
+
+By default, configuration is persisted to `industrial-config.json` in the process working directory. Set `INDUSTRIAL_CONFIG_PATH` to use another location. In a container, mount the directory containing this file as a persistent volume; do not commit or bake broker passwords into source or images.
+
+### 消息配置与真实数据边界
+
+配置界面支持设备 Topic、字段 Topic/JSON path、类型、单位、可查询性、质量路径、有效质量值、来源时间路径、在线策略和阈值报警。Multi-Gateway 的点位消息通常包含 `point_id`、`value`、`quality`、`source_timestamp`；同一设备可以为不同点位配置不同 Topic。
+
+The configuration UI supports device topics, per-field topics and JSON paths, type, unit, queryability, quality path, accepted quality values, source timestamp path, online policy, and threshold alarms. Multi-Gateway point messages commonly contain `point_id`, `value`, `quality`, and `source_timestamp`; one device can map different point topics to separate fields.
+
+The example in [`docs/industrial/example-config.json`](docs/industrial/example-config.json) uses placeholder broker values only. Final field names, topics, quality values, and timestamp semantics must be checked against a real gateway payload for the target industry before deployment.
+
+“Preview mapping” is a dry run. “Send as simulation” calls `/api/industrial/demo` as an isolated trial, shows its result with a simulated label, and does not represent a live broker reading. A device must not be described as live merely because a message exists: the configured online policy and quality value determine whether the reading is valid. Messages with `quality: "bad"` can still be received and displayed while remaining invalid for a valid-data online policy.
+
+### 三步使用流程 / Three-step flow
+
+1. **数据与状态**：配置 MQTT Broker，添加设备和字段，使用 JSON path 选择点位，标记哪些字段可被 MCP 查询。Modbus RTU/TCP 到 MQTT 由现场网关或 Multi-Gateway 完成。
+2. **报警条件**：选择设备、字段、运算符、阈值和持续时间，填写 `messageTemplate`（支持 `{device}`、`{field}`、`{value}`、`{unit}`、`{rule}`）。回差是可选的高级设置。
+3. **小智连接**：HTTP 主动报警填写 Watcher（默认 80）或 D1001（默认 8080）的设备地址。`context` 只发送不超过 25 个 UTF-8 字节的短提示；`speak` 仅适用于兼容的本地 TTS server，发送完整模板文本。MCP 接入点是可选的查询通道，需粘贴 Web 控制台复制的完整地址（协议、路径和 token），不能只填写端口。
+
+The industrial MCP surface exposes the read-only tools `list_industrial_devices`, `get_industrial_reading`, and `list_industrial_alarms`. The HTTP notification path is separate from MCP queries. The explicit send-test submits the current draft as `{ notification, text }`; `status: "accepted"` means accepted by the service, not confirmed playback. The device firmware must provide the `/api/wake` status and notification behavior; this repository has not been verified with real Watcher or D1001 hardware.
+
+### 一次性配置设备通知密钥 / One-time device key setup
+
+设备通知密钥由用户自己选择，不在聊天中发送。改版固件安装后，使用用户专属的 MCP 工具 `self.remote_wake.configure({ token: "用户自选的随机 key", enabled: true })` 写入设备配置，然后在本页面填写同一个 token。若该用户专属工具或改版固件尚未提供，通知连接只能停留在未验证状态；不要根据未知的云端菜单名称猜测配置入口。
+
+The notification key is user-selected and must not be shared in chat. After installing firmware with the notification feature, call the user-only MCP tool `self.remote_wake.configure({ token: "a random key chosen by the user", enabled: true })`, then enter the same token in this UI. If that tool or firmware is unavailable, the notification path remains unverified.

@@ -1,0 +1,56 @@
+{
+  "mqtt": {
+    "url": "mqtts://broker.example.invalid:8883",
+    "username": "gateway-reader",
+    "password": "",
+    "clientId": "sensecraft-industrial-example",
+    "tlsRejectUnauthorized": true
+  },
+  "mcp": {
+    "endpoint": "wss://assistant.example.invalid/mcp"
+  },
+  "devices": [
+    {
+      "id": "line-01",
+      "name": "Line 01",
+      "topic": "missionpack/v1/gateway-01/points/#",
+      "onlineTimeoutSeconds": 120,
+      "qualityPath": "quality",
+      "goodQualityValues": ["good", "ok"],
+      "timestampPath": "source_timestamp",
+      "onlinePolicy": "valid_data",
+      "fields": [
+        {
+          "id": "temperature",
+          "name": "Temperature",
+          "topic": "missionpack/v1/gateway-01/points/temperature",
+          "path": "value",
+          "unit": "°C",
+          "type": "number",
+          "queryable": true
+        },
+        {
+          "id": "pressure",
+          "name": "Pressure",
+          "topic": "missionpack/v1/gateway-01/points/pressure",
+          "path": "value",
+          "unit": "bar",
+          "type": "number",
+          "queryable": true
+        }
+      ],
+      "rules": [
+        {
+          "id": "high-temperature",
+          "name": "High temperature",
+          "fieldId": "temperature",
+          "operator": "gte",
+          "threshold": 80,
+          "durationSeconds": 30,
+          "hysteresis": 2,
+          "enabled": true
+        }
+      ]
+    }
+  ]
+}

@@ -3,8 +3,8 @@
   "version": "0.4.0",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && copyfiles -u 1 src/config/.env src/config/.env.* src/static/**/* dist/",
-    "test": "tsc && node --test dist/mcp_tools/*.test.js"
+    "build": "tsc && copyfiles -u 1 src/config/.env src/config/.env.* src/static/**/* src/industrial-ui/**/* dist/",
+    "test": "tsc && node --test dist/mcp_tools/*.test.js dist/industrial/*.test.js"
   },
   "keywords": [],
   "bin": {
@@ -30,6 +30,8 @@
     "axios": "^1.9.0",
     "dotenv": "^16.5.0",
     "lodash.merge": "^4.6.2",
-    "ws": "^8.21.0"
+    "mqtt": "^5.16.0",
+    "ws": "^8.21.0",
+    "zod": "^4.6.5"
   }
 }

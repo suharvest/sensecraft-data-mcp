@@ -3,8 +3,10 @@ import {McpServer} from "@modelcontextprotocol/sdk/server/mcp.js";
 import {StdioServerTransport} from "@modelcontextprotocol/sdk/server/stdio.js";
 import {getLogger} from "./logger";
 import {CodeReader} from './mcp_tools/code_reader'
-import {PaasClient} from './mcp_tools/paas_client'
 import {WebSocketEndpointTransport} from './transport/ws_endpoint_transport'
+import {IndustrialService} from './industrial/industrial_service'
+import {listenIndustrialHttp} from './industrial/industrial_http'
+import {IndustrialEndpoint} from './industrial/industrial_endpoint'
 
 let logger = getLogger('main')
 
@@ -19,15 +21,21 @@ main().catch((error) => {
     process.exit(1);
 });
 
-function createMcpServer(): McpServer {
+function createMcpServer(industrial?: IndustrialService): McpServer {
     const server = new McpServer({
         name: "sensecraft_data_mcp",
         version: "0.4.0"
     });
-    let passClient = new PaasClient()
     let codeReader = new CodeReader(projectRoot)
 
-    let tools = [...passClient.tools(), ...codeReader.tools()]
+    let tools = industrial ? [...industrial.tools()] : [...codeReader.tools()]
+    if (!industrial) {
+        // Load the legacy PaaS connector only in the legacy mode. It validates
+        // ACCESS_ID/ACCESS_KEY at module initialization, so importing it here
+        // keeps an industrial instance usable without cloud credentials.
+        const {PaasClient} = require('./mcp_tools/paas_client')
+        tools = [...new PaasClient().tools(), ...tools]
+    }
     for (let tool of tools) {
         server.tool(tool.name, tool.description, tool.paramsSchema, tool.item)
         logger.info(`tool(${tool.name}) add to mcp server successfully!!`)
@@ -39,8 +47,8 @@ function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function runOverStdio() {
-    const server = createMcpServer()
+async function runOverStdio(industrial?: IndustrialService) {
+    const server = createMcpServer(industrial)
     const transport = new StdioServerTransport();
     logger.info(`sensecraft_data_mcp is running over stdio...`)
     await server.connect(transport);
@@ -52,7 +60,7 @@ async function runOverStdio() {
  * A brand new McpServer + transport is built for every attempt so no stale session state leaks
  * across reconnects.
  */
-async function runOverWebSocketEndpoint(endpointUrl: string) {
+async function runOverWebSocketEndpoint(endpointUrl: string, industrial?: IndustrialService) {
     let backoff = INITIAL_BACKOFF_MS
     let attempt = 0
 
@@ -63,7 +71,7 @@ async function runOverWebSocketEndpoint(endpointUrl: string) {
                 await sleep(backoff)
             }
 
-            const server = createMcpServer()
+            const server = createMcpServer(industrial)
             const transport = new WebSocketEndpointTransport(endpointUrl)
             const closed = new Promise<void>((resolve) => {
                 transport.onclose = () => resolve()
@@ -87,6 +95,15 @@ async function runOverWebSocketEndpoint(endpointUrl: string) {
 async function main() {
     logger.info('sensecraft_data_mcp is starting...')
 
+    if (process.env.DATA_SOURCE === 'industrial') {
+        const industrial = new IndustrialService()
+        listenIndustrialHttp(industrial)
+        await industrial.connect()
+        const endpoint = new IndustrialEndpoint(industrial, () => createMcpServer(industrial))
+        await endpoint.start()
+        await new Promise<void>(() => {})
+        return
+    }
     const endpointUrl = process.env.MCP_ENDPOINT
     if (endpointUrl) {
         await runOverWebSocketEndpoint(endpointUrl)
