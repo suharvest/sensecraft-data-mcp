@@ -71,6 +71,12 @@ test('send-test reports device authentication failure explicitly', async t=>{
   await assert.rejects(() => s.sendTest('test alarm'), (error:any) => error.code === 'auth_failed' && /401/.test(error.message))
 })
 
+test('HTTP send-test preserves a non-sensitive fetch cause for diagnostics', async t=>{
+  const mock=await serverWith((_req,res)=>{res.socket?.destroy()}); t.after(()=>close(mock.server)); const s=makeService(mock.url); const app=createIndustrialHttpServer(s); await new Promise<void>((resolve,reject)=>{app.once('error',reject);app.listen(0,'127.0.0.1',resolve)}); t.after(()=>close(app))
+  const port=(app.address() as any).port; const response=await fetch(`http://127.0.0.1:${port}/api/industrial/notification/send-test`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:'test alarm'})}); const body:any=await response.json()
+  assert.equal(response.status,502); assert.equal(body.error.code,'notification_failed'); assert.equal(body.error.message,'fetch failed'); assert.equal(body.error.details.cause.code,'UND_ERR_SOCKET'); assert.doesNotMatch(JSON.stringify(body),/device-secret/)
+})
+
 test('send-test reports disabled notifications with a structured code', async t=>{
   const s=makeService('http://127.0.0.1:1'); s.update({notification:{enabled:false}})
   const app=createIndustrialHttpServer(s); await new Promise<void>((resolve,reject)=>{app.once('error',reject);app.listen(0,'127.0.0.1',resolve)}); t.after(()=>close(app))
